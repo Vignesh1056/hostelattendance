@@ -27,7 +27,8 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
     try {
       if (mode === 'admin') {
         // Simple admin password check (in production, use proper authentication)
-        if (formData.adminPassword === 'admin123') {
+        const storedPassword = localStorage.getItem('admin_password') || 'admin123';
+        if (formData.adminPassword === storedPassword) {
           const adminUser: UserType = {
             id: 'admin',
             name: 'Administrator',
