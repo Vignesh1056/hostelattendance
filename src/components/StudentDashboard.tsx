@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Layout } from './Layout';
 import { QrCode, Camera, CheckCircle, XCircle, Calendar, Clock } from 'lucide-react';
-import QrScanner from 'qr-scanner';
 import { getCurrentUser, addAttendanceRecord, isAlreadyMarkedToday, getTodayAttendance } from '../utils/storage';
 import { AttendanceRecord } from '../types';
 import { format } from 'date-fns';
@@ -16,7 +15,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) 
   const [message, setMessage] = useState('');
   const [attendanceMarked, setAttendanceMarked] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const qrScannerRef = useRef<QrScanner | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const user = getCurrentUser();
 
@@ -27,23 +28,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) 
   }, [user]);
 
   const startScanning = async () => {
-    if (!videoRef.current || !user) return;
+    if (!user) return;
 
     try {
       setScanning(true);
       setScanResult(null);
       setMessage('');
 
-      qrScannerRef.current = new QrScanner(
-        videoRef.current,
-        (result) => handleScanResult(result.data),
-        {
-          highlightScanRegion: true,
-          highlightCodeOutline: true,
-        }
-      );
+      // Request camera access
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }
+      });
+      
+      streamRef.current = stream;
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+      }
 
-      await qrScannerRef.current.start();
+      // Start QR code detection
+      startQRDetection();
     } catch (error) {
       console.error('Error starting scanner:', error);
       setMessage('Unable to access camera. Please check permissions.');
@@ -52,12 +57,58 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) 
     }
   };
 
-  const stopScanning = () => {
-    if (qrScannerRef.current) {
-      qrScannerRef.current.stop();
-      qrScannerRef.current.destroy();
-      qrScannerRef.current = null;
+  const startQRDetection = async () => {
+    // Dynamic import of qr-scanner
+    try {
+      const QrScanner = (await import('qr-scanner')).default;
+      
+      if (!videoRef.current) return;
+      
+      intervalRef.current = setInterval(async () => {
+        if (videoRef.current && canvasRef.current) {
+          const canvas = canvasRef.current;
+          const context = canvas.getContext('2d');
+          
+          if (context && videoRef.current.videoWidth > 0) {
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+            context.drawImage(videoRef.current, 0, 0);
+            
+            try {
+              const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+              const result = await QrScanner.scanImage(imageData);
+              if (result) {
+                handleScanResult(result);
+              }
+            } catch (error) {
+              // No QR code found, continue scanning
+            }
+          }
+        }
+      }, 500);
+    } catch (error) {
+      console.error('Error loading QR scanner:', error);
+      setMessage('QR scanner failed to load. Please try again.');
+      setScanResult('error');
+      stopScanning();
     }
+  };
+
+  const stopScanning = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
     setScanning(false);
   };
 
@@ -192,7 +243,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) 
                   className="w-full h-64 object-cover"
                   playsInline
                   muted
+                  autoPlay
                 />
+                <canvas ref={canvasRef} className="hidden" />
                 <div className="absolute inset-0 flex items-center justify-center">
                   <div className="w-48 h-48 border-2 border-white border-dashed rounded-lg animate-pulse" />
                 </div>
@@ -229,4 +282,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) 
       </div>
     </Layout>
   );
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopScanning();
+    };
+  }, []);
 };
