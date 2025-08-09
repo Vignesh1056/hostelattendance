@@ -4,6 +4,7 @@ import { QrCode, Camera, CheckCircle, XCircle, Calendar, Clock } from 'lucide-re
 import { getCurrentUser, addAttendanceRecord, isAlreadyMarkedToday, getTodayAttendance } from '../utils/storage';
 import { AttendanceRecord } from '../types';
 import { format } from 'date-fns';
+import jsQR from 'jsqr';
 
 interface StudentDashboardProps {
   onLogout: () => void;
@@ -58,40 +59,27 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) 
   };
 
   const startQRDetection = async () => {
-    // Dynamic import of qr-scanner
-    try {
-      const QrScanner = (await import('qr-scanner')).default;
-      
-      if (!videoRef.current) return;
-      
-      intervalRef.current = setInterval(async () => {
-        if (videoRef.current && canvasRef.current) {
-          const canvas = canvasRef.current;
-          const context = canvas.getContext('2d');
+    if (!videoRef.current || !canvasRef.current) return;
+    
+    intervalRef.current = setInterval(() => {
+      if (videoRef.current && canvasRef.current && videoRef.current.videoWidth > 0) {
+        const canvas = canvasRef.current;
+        const context = canvas.getContext('2d');
+        
+        if (context) {
+          canvas.width = videoRef.current.videoWidth;
+          canvas.height = videoRef.current.videoHeight;
+          context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
           
-          if (context && videoRef.current.videoWidth > 0) {
-            canvas.width = videoRef.current.videoWidth;
-            canvas.height = videoRef.current.videoHeight;
-            context.drawImage(videoRef.current, 0, 0);
-            
-            try {
-              const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-              const result = await QrScanner.scanImage(imageData);
-              if (result) {
-                handleScanResult(result);
-              }
-            } catch (error) {
-              // No QR code found, continue scanning
-            }
+          const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height);
+          
+          if (code) {
+            handleScanResult(code.data);
           }
         }
-      }, 500);
-    } catch (error) {
-      console.error('Error loading QR scanner:', error);
-      setMessage('QR scanner failed to load. Please try again.');
-      setScanResult('error');
-      stopScanning();
-    }
+      }
+    }, 300);
   };
 
   const stopScanning = () => {
@@ -282,11 +270,4 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({ onLogout }) 
       </div>
     </Layout>
   );
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      stopScanning();
-    };
-  }, []);
 };
